@@ -149,3 +149,26 @@ Access is always guarded by `g_data_mutex` (FreeRTOS mutex).
 - OTA firmware updates
 - Local data logging / SD card
 - CAN bus sniffing / raw frame capture UI
+
+---
+
+## Deep Sleep
+
+- Idle timeout: `SLEEP_IDLE_TIMEOUT_MS` (default 300 000 ms / 5 min), defined in `credentials.h`
+- Both `last_hs_update_ms` and `last_ms_update_ms` must be stale before sleep triggers
+- Wake source: `esp_sleep_enable_ext0_wakeup(CAN_INT_PIN, LOW)` — `CAN_INT_PIN` = GPIO8 = MCP2515 INT on T-2CAN schematic
+- Pre-sleep teardown: WiFi disconnected, then MCP2515 CANINTE configured via SPI (RX0IE | RX1IE set, CANINTF cleared) so INT goes LOW on first received frame
+- On wake: full reboot, `setup()` runs normally — no special wake-path handling required
+- Files: `src/sleep_manager.h`, `src/sleep_manager.cpp`
+
+## OLED Display
+
+- Hardware: SH1106 128×64, I2C, T-2CAN QWIIC connector — SDA=GPIO1, SCL=GPIO2 (`DISPLAY_SDA`, `DISPLAY_SCL` in `credentials.h`)
+- Library: U8g2 (`olikraus/U8g2`)
+- Graceful absent: `display_init()` stores `u8g2.begin()` result in `s_display_ok`; all draw calls are no-ops if the display is not detected
+- 3 rotating frames (interval `DISPLAY_INTERVAL_MS`, default 2 000 ms):
+  - Frame 0 **ENGINE**: RPM, Speed, Throttle %, Oil Temp °C
+  - Frame 1 **SENSORS**: Coolant °C, IAT °C, Fuel %, Battery V
+  - Frame 2 **STATUS**: HS-CAN health (●/○), MS-CAN health (●/○), WiFi SSID, IP address
+- `VehicleData` snapshot taken under `g_data_mutex` at start of each draw cycle
+- Files: `src/display.h`, `src/display.cpp`
