@@ -1,0 +1,5 @@
+.pio/
+.vscode/
+credentials.h
+.superpowers/
+include/credentials.h

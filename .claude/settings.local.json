@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:\\\\Users\\\\merli\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.1.0\\\\skills\\\\brainstorming\\\\scripts\\\\start-server.sh --project-dir \"E:\\\\Development\\\\Arduino\\\\esp32_ODBII_hs_ms\")",
+      "PowerShell(& \"C:\\\\Users\\\\merli\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.1.0\\\\skills\\\\brainstorming\\\\scripts\\\\start-server.sh\" --project-dir \"E:\\\\Development\\\\Arduino\\\\esp32_ODBII_hs_ms\" 2>&1; Write-Output \"exit: $LASTEXITCODE\")"
+    ]
+  }
+}
