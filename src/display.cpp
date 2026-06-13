@@ -37,7 +37,7 @@ static void draw_title(const char *title) {
 static void draw_cell(uint8_t x, uint8_t top, const char *label, const char *value) {
     u8g2.setFont(u8g2_font_5x7_tf);
     u8g2.drawStr(x, top + 8, label);
-    u8g2.setFont(u8g2_font_ncenB14_tf);
+    u8g2.setFont(u8g2_font_7x13B_tf);
     u8g2.drawStr(x + 10, top + 23, value);
 }
 
@@ -76,9 +76,9 @@ static void draw_frame_sensors(const VehicleData &d) {
 static void draw_status_row(uint8_t y, const char *label, bool ok, const char *detail) {
     u8g2.setFont(u8g2_font_5x7_tf);
     u8g2.drawStr(0, y, label);
-    if (ok) u8g2.drawDisc(28, y - 3, 3);
-    else    u8g2.drawCircle(28, y - 3, 3);
-    u8g2.drawStr(35, y, detail);
+    if (ok) u8g2.drawDisc(50, y - 3, 3);
+    else    u8g2.drawCircle(50, y - 3, 3);
+    u8g2.drawStr(60, y, detail);
 }
 
 static void draw_frame_status(const VehicleData &d) {
@@ -134,4 +134,11 @@ void display_loop() {
 
     redraw(snap);
     s_frame = (s_frame + 1) % 3;
+}
+
+void display_shutdown() {
+    if (!s_display_ok) return;
+    u8g2.clearDisplay();
+    u8g2.setPowerSave(1); // Put the display to sleep
+    diag_log("[DISP] display turned off");
 }

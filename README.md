@@ -31,6 +31,17 @@ The board exposes two independent CAN transceivers connected to the ESP32-S3's d
 | CAN1 TX (MS-CAN) | 6 |
 | CAN1 RX (MS-CAN) | 7 |
 
+### I2C OLED Display (e.g., SSD1306)
+
+The board also supports an I2C OLED display. Connect the display to the dedicated I2C port with IO1 and IO2.
+
+**Default pin assignments (adjust in `credentials.h` if different):**
+
+| Signal | GPIO |
+|--------|------|
+| I2C SDA  | 1    |
+| I2C SCL  | 2    |
+
 ---
 
 ## OBD-II Wiring

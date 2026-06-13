@@ -1,5 +1,6 @@
 #include "sleep_manager.h"
 #include "obd_data.h"
+#include "display.h"
 #include "credentials.h"
 #include <Arduino.h>
 #include <SPI.h>
@@ -85,6 +86,8 @@ void sleep_manager_check() {
 
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
+
+    display_shutdown();
 
     mcp2515_enable_wake();
 
