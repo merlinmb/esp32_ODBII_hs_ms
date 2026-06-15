@@ -17,12 +17,12 @@ static uint32_t s_last_switch = 0;
 // ---- value formatting -------------------------------------------------------
 
 static void fmt_int(char *buf, size_t n, float v, const char *unit) {
-    if (v < 0) { snprintf(buf, n, "--"); return; }
+    if (isnan(v)) { snprintf(buf, n, "n/a"); return; }
     snprintf(buf, n, "%d%s", (int)roundf(v), unit);
 }
 
 static void fmt_f1(char *buf, size_t n, float v, const char *unit) {
-    if (v < 0) { snprintf(buf, n, "--"); return; }
+    if (isnan(v)) { snprintf(buf, n, "n/a"); return; }
     snprintf(buf, n, "%.1f%s", v, unit);
 }
 
@@ -107,11 +107,22 @@ static void redraw(const VehicleData &snap) {
 // ---- public API ------------------------------------------------------------
 
 void display_init() {
+    Wire.begin(DISPLAY_SDA, DISPLAY_SCL);
+    Wire.setClock(100000);
+
     s_display_ok = u8g2.begin();
     if (s_display_ok) {
-        u8g2.clearDisplay();
+        u8g2.setPowerSave(0);
+        u8g2.setContrast(255);
         s_last_switch = millis() - DISPLAY_INTERVAL_MS;
         diag_log("[DISP] SH1106 found on SDA=%d SCL=%d", DISPLAY_SDA, DISPLAY_SCL);
+
+        VehicleData snap;
+        if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            snap = g_vehicle;
+            xSemaphoreGive(g_data_mutex);
+            redraw(snap);
+        }
     } else {
         diag_log("[DISP] no display detected — running headless");
     }

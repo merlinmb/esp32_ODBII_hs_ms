@@ -57,9 +57,9 @@ static void mcp2515_enable_wake() {
 
 void sleep_manager_init() {
     s_last_activity_ms = millis();
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)CAN_INT_PIN, 0);
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)MCP2515_INT_PIN, 0);
     diag_log("[Sleep] init — idle timeout %lu ms, wake on GPIO%d LOW",
-             (unsigned long)SLEEP_IDLE_TIMEOUT_MS, CAN_INT_PIN);
+             (unsigned long)SLEEP_IDLE_TIMEOUT_MS, MCP2515_INT_PIN);
 }
 
 void sleep_manager_check() {

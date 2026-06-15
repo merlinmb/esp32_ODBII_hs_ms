@@ -2,7 +2,9 @@
 #include "obd_data.h"
 #include "credentials.h"
 #include <Arduino.h>
-#include "driver/twai.h"
+#include <SPI.h>
+#include <mcp2515.h>
+#include <esp_task_wdt.h>
 
 // OBD-II Mode 01 PID definitions
 #define PID_ENGINE_LOAD     0x04
@@ -20,73 +22,64 @@
 #define OBD_RESPONSE_ID         0x7E8
 #define OBD_RESPONSE_TIMEOUT_MS 25
 
-// Consecutive timeout threshold before declaring disconnected
 #define HS_FAIL_THRESHOLD 8
 
-static twai_handle_t s_hs_handle = nullptr;
+static MCP2515 s_mcp(MCP2515_CS_PIN);
 
 static bool install_hs_can() {
-    twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(
-        (gpio_num_t)CAN_HS_TX_PIN,
-        (gpio_num_t)CAN_HS_RX_PIN,
-        TWAI_MODE_NORMAL
-    );
-    g.controller_id = 0;
-    g.rx_queue_len  = 16;
-    g.tx_queue_len  = 8;
+    SPI.begin(SPI_SCLK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, MCP2515_CS_PIN);
 
-    twai_timing_config_t t = TWAI_TIMING_CONFIG_500KBITS();
-    twai_filter_config_t f = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+    // reset() can hang if MCP2515 is absent — guard with a brief yield first
+    // Hardware reset the MCP2515
+    pinMode(MCP2515_RST_PIN, OUTPUT);
+    digitalWrite(MCP2515_RST_PIN, LOW);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    digitalWrite(MCP2515_RST_PIN, HIGH);
+    vTaskDelay(pdMS_TO_TICKS(10));
 
-    esp_err_t err = twai_driver_install_v2(&g, &t, &f, &s_hs_handle);
-    if (err != ESP_OK) {
-        diag_log("[HS-CAN] driver install failed: %s", esp_err_to_name(err));
+    vTaskDelay(pdMS_TO_TICKS(10));
+    s_mcp.reset();
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    if (s_mcp.setBitrate(CAN_500KBPS) != MCP2515::ERROR_OK) {
+        diag_log("[HS-CAN] setBitrate failed");
+        SPI.end();
         return false;
     }
-    err = twai_start_v2(s_hs_handle);
-    if (err != ESP_OK) {
-        diag_log("[HS-CAN] start failed: %s", esp_err_to_name(err));
-        twai_driver_uninstall_v2(s_hs_handle);
-        s_hs_handle = nullptr;
+    if (s_mcp.setNormalMode() != MCP2515::ERROR_OK) {
+        diag_log("[HS-CAN] setNormalMode failed");
+        SPI.end();
         return false;
     }
-    diag_log("[HS-CAN] started OK (500 kbps)");
+    diag_log("[HS-CAN] MCP2515 started OK (500 kbps)");
     return true;
 }
 
-static void uninstall_hs_can() {
-    if (s_hs_handle) {
-        twai_stop_v2(s_hs_handle);
-        twai_driver_uninstall_v2(s_hs_handle);
-        s_hs_handle = nullptr;
-    }
-}
-
 static bool send_pid_request(uint8_t pid) {
-    twai_message_t msg = {};
-    msg.identifier       = OBD_REQUEST_ID;
-    msg.extd             = 0;
-    msg.data_length_code = 8;
-    msg.data[0] = 0x02;
-    msg.data[1] = 0x01;
-    msg.data[2] = pid;
-    return twai_transmit_v2(s_hs_handle, &msg, pdMS_TO_TICKS(10)) == ESP_OK;
+    struct can_frame req = {};
+    req.can_id  = OBD_REQUEST_ID;
+    req.can_dlc = 8;
+    req.data[0] = 0x02;
+    req.data[1] = 0x01;
+    req.data[2] = pid;
+    return s_mcp.sendMessage(&req) == MCP2515::ERROR_OK;
 }
 
 static bool recv_pid_response(uint8_t pid, uint8_t* out_a, uint8_t* out_b) {
-    twai_message_t msg;
+    struct can_frame resp;
     unsigned long deadline = millis() + OBD_RESPONSE_TIMEOUT_MS;
     while (millis() < deadline) {
-        if (twai_receive_v2(s_hs_handle, &msg, pdMS_TO_TICKS(5)) == ESP_OK) {
-            if (msg.identifier == OBD_RESPONSE_ID &&
-                msg.data_length_code >= 4 &&
-                msg.data[1] == 0x41 &&
-                msg.data[2] == pid) {
-                *out_a = msg.data[3];
-                *out_b = (msg.data_length_code >= 5) ? msg.data[4] : 0;
+        if (s_mcp.readMessage(&resp) == MCP2515::ERROR_OK) {
+            if (resp.can_id == OBD_RESPONSE_ID &&
+                resp.can_dlc >= 4 &&
+                resp.data[1] == 0x41 &&
+                resp.data[2] == pid) {
+                *out_a = resp.data[3];
+                *out_b = (resp.can_dlc >= 5) ? resp.data[4] : 0;
                 return true;
             }
         }
+        vTaskDelay(1);
     }
     return false;
 }
@@ -110,7 +103,11 @@ static void poll_dtc_status() {
 }
 
 void can_hs_task(void* /*pvParameters*/) {
-    diag_log("[HS-CAN] task started, connecting...");
+    diag_log("[HS-CAN] task started, connecting via MCP2515...");
+
+    // Do NOT subscribe to task WDT — MCP2515 SPI transfers block with no timeout
+    // and will always trigger it when the bus is absent or slow to respond.
+    esp_task_wdt_delete(NULL);
 
     while (!install_hs_can()) {
         diag_log("[HS-CAN] retrying in 3 s...");
@@ -128,15 +125,13 @@ void can_hs_task(void* /*pvParameters*/) {
     uint8_t  fail_streak = 0;
 
     for (;;) {
-        // Handle reconnect request from web UI
         bool want_reconnect = false;
         if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             want_reconnect = g_vehicle.reconnect_hs;
             xSemaphoreGive(g_data_mutex);
         }
         if (want_reconnect) {
-            diag_log("[HS-CAN] reconnect requested — restarting driver...");
-            uninstall_hs_can();
+            diag_log("[HS-CAN] reconnect requested — resetting MCP2515...");
             if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 g_vehicle.hs_connected = false;
                 g_vehicle.reconnect_hs = false;

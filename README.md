@@ -18,47 +18,81 @@ ESP32-S3 firmware for the **Lilygo T2-CAN** board. Reads both the High-Speed (HS
 
 ## Hardware
 
-### Lilygo T2-CAN
+### Lilygo T2-CAN V1.0
 
-The board exposes two independent CAN transceivers connected to the ESP32-S3's dual TWAI controllers. Verify your exact board revision's pinout against the schematic in the Lilygo GitHub repo before flashing.
+The T2-CAN V1.0 uses a **hybrid CAN architecture** — not two native TWAI controllers as the board name might imply:
 
-**Default pin assignments (adjust in `credentials.h` if different):**
+| Bus | Controller | Interface | GPIO |
+|-----|-----------|-----------|------|
+| CAN A — HS-CAN (500 kbps) | MCP2515 (external SPI) | SPI | CS=10, SCLK=12, MOSI=11, MISO=13 |
+| CAN B — MS-CAN (125 kbps) | ESP32-S3 native TWAI | Direct | TX=7, RX=6 |
 
-| Signal | GPIO |
-|--------|------|
-| CAN0 TX (HS-CAN) | 4 |
-| CAN0 RX (HS-CAN) | 5 |
-| CAN1 TX (MS-CAN) | 6 |
-| CAN1 RX (MS-CAN) | 7 |
+The MCP2515 also has a hardware reset (GPIO 9) and interrupt (GPIO 8) line. Pin definitions are in `include/credentials.h` and match the [official LilyGo T2-CAN pin_config.h](https://github.com/Xinyuan-LilyGO/T-2Can/blob/main/libraries/private_library/pin_config.h).
 
-### I2C OLED Display (e.g., SSD1306)
+### I2C OLED Display (SH1106 128×64)
 
-The board also supports an I2C OLED display. Connect the display to the dedicated I2C port with IO1 and IO2.
+Connect via the QWIIC/I2C connector on the board.
 
 **Default pin assignments (adjust in `credentials.h` if different):**
 
 | Signal | GPIO |
 |--------|------|
-| I2C SDA  | 1    |
-| I2C SCL  | 2    |
+| I2C SDA | 17 |
+| I2C SCL | 18 |
 
 ---
 
 ## OBD-II Wiring
 
-Use a standard OBD-II breakout cable or connector. Wire as follows:
+The connector used for this build is an [OBD-II 16-pin breakout cable (Amazon UK)](https://www.amazon.co.uk/dp/B0F2HTKXRH?ref=ppx_yo2ov_dt_b_fed_asin_title), which exposes individual colour-coded wires for each pin.
 
-```
-OBD-II Connector          Lilygo T2-CAN
-─────────────────         ─────────────
-Pin  6  HS-CAN H  ───────  CAN0 CANH
-Pin 14  HS-CAN L  ───────  CAN0 CANL
-Pin  3  MS-CAN H  ───────  CAN1 CANH  (Ford-specific)
-Pin 11  MS-CAN L  ───────  CAN1 CANL  (Ford-specific)
-Pin 16  12 V      ───────  VIN  (or external 5 V reg)
-Pin  4  Chassis GND ─────  GND
-Pin  5  Signal GND  ─────  GND
-```
+### Wire colour reference (cable pin-out)
+
+| OBD-II Pin | Wire Colour | Standard Function |
+|:---:|---|---|
+| 1 | Black | Manufacturer-defined |
+| 2 | Brown | Manufacturer-defined |
+| 3 | Red | MS-CAN High (Ford) |
+| 4 | Orange | Chassis Ground |
+| 5 | Yellow | Signal Ground |
+| 6 | Green | HS-CAN High |
+| 7 | Blue | K-Line / ISO 9141 |
+| 8 | Purple | Manufacturer-defined |
+| 9 | Grey | Manufacturer-defined |
+| 10 | White | Manufacturer-defined |
+| 11 | Pink | MS-CAN Low (Ford) |
+| 12 | Light Green | Manufacturer-defined |
+| 13 | Black/White | Manufacturer-defined |
+| 14 | Brown/White | HS-CAN Low |
+| 15 | Red/White | Manufacturer-defined |
+| 16 | Green/White | Battery +12 V |
+
+### T2-CAN connector wiring
+
+#### CAN Bus A — HS-CAN (500 kbps, OBD-II standard)
+
+| T2-CAN Pin | Signal | OBD-II Pin | Wire Colour |
+|---|---|:---:|---|
+| CANHA | CAN High | 6 | Green |
+| CANLA | CAN Low | 14 | Brown/White |
+| SGNDA | Signal Ground | 5 | Yellow |
+| DGNDA | Digital Ground | 4 | Orange |
+
+#### CAN Bus B — MS-CAN (125 kbps, Ford Medium Speed)
+
+| T2-CAN Pin | Signal | OBD-II Pin | Wire Colour |
+|---|---|:---:|---|
+| CANHB | CAN High | 3 | Red |
+| CANLB | CAN Low | 11 | Pink |
+| SGNDB | Signal Ground | 5 | Yellow (shared with Bus A) |
+| DGNDB | Digital Ground | 4 | Orange (shared with Bus A) |
+
+#### Power
+
+| T2-CAN Pin | Signal | OBD-II Pin | Wire Colour |
+|---|---|:---:|---|
+| VIN | +12 V battery | 16 | Green/White |
+| GND | Power Ground | 4 | Orange |
 
 > **Note:** OBD-II pins 3 and 11 are Ford-proprietary MS-CAN. They are not present on non-Ford vehicles.
 
@@ -81,6 +115,88 @@ Carries body/comfort data (fuel gauge, HVAC, instrument cluster). Ford ECUs broa
 | 0x420 | Fuel level | 0 | `byte / 2.55` → % |
 
 Additional IDs can be added in `src/can_ms.cpp` as you discover them with a CAN sniffer.
+
+---
+
+## Ford Focus MK2 (2007–2008, UK) — Model-Specific Notes
+
+This section documents the specific CAN bus architecture of the **Ford Focus MK2 C170 platform** (2005–2008, UK market) and confirms compatibility with this firmware.
+
+### Dual CAN Bus Architecture
+
+The Focus MK2 is one of Ford's earliest models to use a dual-bus CAN architecture. This is why a standard ELM327 dongle cannot access body modules without a hardware HS/MS-CAN toggle switch (as sold by ELMConfig/FORScan adapters) — a standard OBD-II dongle only sees pins 6 and 14 (HS-CAN).
+
+| Bus | OBD-II Pins | Speed | Purpose |
+|-----|------------|-------|---------|
+| HS-CAN | Pin 6 (High), Pin 14 (Low) | 500 kbps | Powertrain, ABS, transmission |
+| MS-CAN | Pin 3 (High), Pin 11 (Low) | 125 kbps | Body, comfort, instrument cluster |
+
+> Pins 3 and 11 are **Ford-proprietary** — they carry no signal on non-Ford vehicles.
+
+### Which Modules Live on Each Bus
+
+**HS-CAN (500 kbps) — accessed by this firmware via MCP2515:**
+
+| Module | Abbrev | What it provides |
+|--------|--------|-----------------|
+| Powertrain Control Module | PCM | RPM, speed, temps, MAF, throttle, DTCs |
+| Transmission Control Module | TCM | Gear, torque |
+| Anti-lock Braking System | ABS/HEC | Wheel speeds |
+| Electric Power Assisted Steering | EHPAS | Steering load |
+| Body Control Module | BCM | Some body signals |
+
+**MS-CAN (125 kbps) — listened to passively by this firmware via TWAI:**
+
+| Module | Abbrev | What it provides |
+|--------|--------|-----------------|
+| Generic Electronic Module | GEM | Lighting, wipers, central locking |
+| Driver/Passenger Door Modules | DDM / PDM | Window, mirror control |
+| Electronic Automatic Temp Control | EATC | Climate |
+| Restraints Control Module | RCM | Airbag |
+| Instrument Cluster | IC | Fuel gauge, odometer, warnings |
+| Keyless Vehicle Module | KVM | Remote locking |
+| Parking Aid Module | PAM | Sensors |
+
+### OBD-II Diagnostic Protocol (HS-CAN)
+
+The Focus MK2 UK uses **ISO 15765-4** (CAN 11-bit, 500 kbps) for OBD-II diagnostics. All standard Mode 01 PIDs are supported:
+
+| PID | Parameter | Formula |
+|-----|-----------|---------|
+| 0x0C | Engine RPM | `((A×256)+B) / 4` |
+| 0x0D | Vehicle speed | `A` km/h |
+| 0x05 | Coolant temperature | `A − 40` °C |
+| 0x0F | Intake air temperature | `A − 40` °C |
+| 0x10 | MAF air flow | `((A×256)+B) / 100` g/s |
+| 0x11 | Throttle position | `A × 100 / 255` % |
+| 0x42 | Battery voltage | `((A×256)+B) / 1000` V |
+| 0x5C | Oil temperature | `A − 40` °C |
+| 0x01 | DTC status / MIL | Bit 7 of A = MIL on/off; bits 0–6 = DTC count |
+
+Request address: `0x7DF` (functional broadcast to all ECUs)
+Response address: `0x7E8` (PCM — engine ECU)
+
+### MS-CAN Fuel Level (Unverified — Needs In-Car Confirmation)
+
+The instrument cluster on the MS-CAN bus broadcasts fuel level as a periodic frame. CAN ID `0x420`, byte 0, scaled as `byte / 2.55` → % is **widely cited in Ford reverse-engineering communities** for this platform, but has not been independently verified against a production UK MK2.
+
+**To verify or find the correct ID on your car:**
+
+1. Enable serial logging and watch MS-CAN output — the firmware logs all unrecognised frame IDs at debug level
+2. With a nearly-full tank, note which IDs are present
+3. Remove ~5 litres, re-check — the ID whose byte 0 value changed is the fuel level frame
+4. Update `MS_ID_FUEL_LEVEL` in `src/can_ms.cpp` if the ID differs
+
+### Termination
+
+Do **not** add 120 Ω termination resistors. The vehicle bus is already terminated at both ends (ECU and instrument cluster). The T2-CAN board has optional termination jumpers — leave them **open** when connected to an in-vehicle bus, otherwise you'll create a 60 Ω net impedance and cause bus errors.
+
+### Known Limitations on This Platform
+
+- **Oil temperature (PID 0x5C):** May not be supported on all MK2 engine variants. The 1.6 Duratec petrol does not have an oil temp sensor — PID queries will time out silently.
+- **Battery voltage (PID 0x42):** Returns ECU supply voltage, not alternator voltage directly. Values are typically 13.8–14.4 V at idle with engine running.
+- **MAF (PID 0x10):** Not present on diesel variants (use MAP instead). Queries will time out on TDCi engines.
+- **MS-CAN availability:** The MS-CAN bus is only active with ignition on (position II). It goes silent within seconds of key-off, which will trigger the MS-CAN silence timeout in the firmware.
 
 ---
 
@@ -110,10 +226,18 @@ Edit `credentials.h` and fill in your values:
 #define MQTT_PORT              1883
 #define MQTT_TOPIC             "car/focus/obd"
 #define MQTT_PUBLISH_INTERVAL_MS  30000   // 30 s
-#define CAN_HS_TX_PIN          4
-#define CAN_HS_RX_PIN          5
-#define CAN_MS_TX_PIN          6
-#define CAN_MS_RX_PIN          7
+
+// T2-CAN V1.0 — MCP2515 SPI pins for HS-CAN
+#define MCP2515_CS_PIN         10
+#define MCP2515_RST_PIN        9
+#define MCP2515_INT_PIN        8
+#define SPI_SCLK_PIN           12
+#define SPI_MOSI_PIN           11
+#define SPI_MISO_PIN           13
+
+// T2-CAN V1.0 — native TWAI pins for MS-CAN
+#define CAN_MS_TX_PIN          7
+#define CAN_MS_RX_PIN          6
 ```
 
 ### 3. Build and flash

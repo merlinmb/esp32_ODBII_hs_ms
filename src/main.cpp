@@ -10,7 +10,17 @@
 #include "display.h"
 
 // Globals defined here, declared extern in obd_data.h
-VehicleData g_vehicle = {};
+VehicleData g_vehicle = {
+    .rpm               = NAN,
+    .speed_kmh         = NAN,
+    .coolant_temp_c    = NAN,
+    .intake_air_temp_c = NAN,
+    .maf_g_per_s       = NAN,
+    .throttle_pct      = NAN,
+    .battery_voltage   = NAN,
+    .oil_temp_c        = NAN,
+    .fuel_level_pct    = NAN,
+};
 SemaphoreHandle_t g_data_mutex = nullptr;
 
 static WiFiClient s_wifi_client;
@@ -48,30 +58,29 @@ void setup() {
     mqtt_setup(s_wifi_client);
     display_init();
 
-    // HS-CAN task pinned to Core 0
+    // Both CAN tasks on Core 1 — Core 0 idle task is WDT-monitored and must not be starved.
+    // MCP2515 SPI transfers block with no timeout, so can_hs must not run on Core 0.
     xTaskCreatePinnedToCore(
-        can_hs_task, "can_hs", 4096, nullptr, 5, nullptr, 0
+        can_hs_task, "can_hs", 6144, nullptr, 5, nullptr, 1
     );
-
-    // MS-CAN task pinned to Core 0
     xTaskCreatePinnedToCore(
-        can_ms_task, "can_ms", 4096, nullptr, 5, nullptr, 0
+        can_ms_task, "can_ms", 6144, nullptr, 5, nullptr, 1
     );
 
     Serial.println("[Boot] tasks started — open http://" + WiFi.localIP().toString());
 }
 
 void loop() {
-    // WiFi watchdog — reconnect if dropped
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[WiFi] reconnecting...");
-        WiFi.reconnect();
-        delay(5000);
-        return;
-    }
-
     mqtt_loop();
     display_loop();
     sleep_manager_check();
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[WiFi] reconnecting...");
+        WiFi.reconnect();
+        delay(500);
+        return;
+    }
+
     delay(10);
 }
