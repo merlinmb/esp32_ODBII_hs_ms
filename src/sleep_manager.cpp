@@ -57,7 +57,9 @@ static void mcp2515_enable_wake() {
 
 void sleep_manager_init() {
     s_last_activity_ms = millis();
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)MCP2515_INT_PIN, 0);
+    // ESP32-S3 does not support ext0; use ext1 with a single-pin mask.
+    // Wake when GPIO8 (MCP2515 INT, active-low) goes LOW.
+    esp_sleep_enable_ext1_wakeup(1ULL << MCP2515_INT_PIN, ESP_EXT1_WAKEUP_ALL_LOW);
     diag_log("[Sleep] init — idle timeout %lu ms, wake on GPIO%d LOW",
              (unsigned long)SLEEP_IDLE_TIMEOUT_MS, MCP2515_INT_PIN);
 }
@@ -82,6 +84,16 @@ void sleep_manager_check() {
     }
 
     diag_log("[Sleep] %lu ms idle — entering deep sleep", (unsigned long)SLEEP_IDLE_TIMEOUT_MS);
+
+    // If the MCP2515 INT pin is already LOW, the CAN bus just became active.
+    // Abort sleep and reset the activity timer instead.
+    pinMode(MCP2515_INT_PIN, INPUT_PULLUP);
+    if (digitalRead(MCP2515_INT_PIN) == LOW) {
+        diag_log("[Sleep] aborted — CAN INT asserted, bus active");
+        s_last_activity_ms = millis();
+        return;
+    }
+
     delay(100);
 
     WiFi.disconnect(true);
@@ -90,6 +102,16 @@ void sleep_manager_check() {
     display_shutdown();
 
     mcp2515_enable_wake();
+
+    // Double-check INT pin after reconfiguring MCP2515 — a frame arriving
+    // between the clear and sleep entry would cause an immediate wake loop.
+    if (digitalRead(MCP2515_INT_PIN) == LOW) {
+        diag_log("[Sleep] aborted after MCP reset — CAN INT asserted");
+        s_last_activity_ms = millis();
+        WiFi.mode(WIFI_STA);
+        WiFi.reconnect();
+        return;
+    }
 
     Serial.println("[Sleep] deep sleep now — wake on CAN activity (GPIO8 LOW)");
     Serial.flush();

@@ -114,15 +114,18 @@ void display_init() {
     if (s_display_ok) {
         u8g2.setPowerSave(0);
         u8g2.setContrast(255);
-        s_last_switch = millis() - DISPLAY_INTERVAL_MS;
+        s_frame = 0;
+        s_last_switch = millis();
         diag_log("[DISP] SH1106 found on SDA=%d SCL=%d", DISPLAY_SDA, DISPLAY_SCL);
 
         VehicleData snap;
         if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             snap = g_vehicle;
             xSemaphoreGive(g_data_mutex);
-            redraw(snap);
+        } else {
+            snap = {};
         }
+        redraw(snap);
     } else {
         diag_log("[DISP] no display detected — running headless");
     }
@@ -133,18 +136,15 @@ void display_loop() {
 
     uint32_t now = millis();
     if ((now - s_last_switch) < (uint32_t)DISPLAY_INTERVAL_MS) return;
-    s_last_switch = now;
 
     VehicleData snap;
-    if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        snap = g_vehicle;
-        xSemaphoreGive(g_data_mutex);
-    } else {
-        return;
-    }
+    if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    snap = g_vehicle;
+    xSemaphoreGive(g_data_mutex);
 
-    redraw(snap);
+    s_last_switch = now;
     s_frame = (s_frame + 1) % 3;
+    redraw(snap);
 }
 
 void display_shutdown() {

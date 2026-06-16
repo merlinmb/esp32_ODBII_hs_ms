@@ -24,31 +24,33 @@
 
 #define HS_FAIL_THRESHOLD 8
 
-static MCP2515 s_mcp(MCP2515_CS_PIN);
+// Pointer instead of global instance — avoids the MCP2515 constructor calling
+// SPI.begin() during C++ static init (before setup()), which corrupts the GPIO
+// matrix and interferes with Wire/I2C on GPIO1/GPIO2 (OLED).
+static MCP2515* s_mcp = nullptr;
 
 static bool install_hs_can() {
-    SPI.begin(SPI_SCLK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, MCP2515_CS_PIN);
+    // Create the MCP2515 instance the first time, passing &SPI so the
+    // constructor does not call SPI.begin() again.
+    if (s_mcp == nullptr) {
+        s_mcp = new MCP2515(MCP2515_CS_PIN, 10000000UL, &SPI);
+    }
 
-    // reset() can hang if MCP2515 is absent — guard with a brief yield first
-    // Hardware reset the MCP2515
     pinMode(MCP2515_RST_PIN, OUTPUT);
     digitalWrite(MCP2515_RST_PIN, LOW);
     vTaskDelay(pdMS_TO_TICKS(10));
     digitalWrite(MCP2515_RST_PIN, HIGH);
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    vTaskDelay(pdMS_TO_TICKS(10));
-    s_mcp.reset();
+    s_mcp->reset();
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    if (s_mcp.setBitrate(CAN_500KBPS) != MCP2515::ERROR_OK) {
+    if (s_mcp->setBitrate(CAN_500KBPS) != MCP2515::ERROR_OK) {
         diag_log("[HS-CAN] setBitrate failed");
-        SPI.end();
         return false;
     }
-    if (s_mcp.setNormalMode() != MCP2515::ERROR_OK) {
+    if (s_mcp->setNormalMode() != MCP2515::ERROR_OK) {
         diag_log("[HS-CAN] setNormalMode failed");
-        SPI.end();
         return false;
     }
     diag_log("[HS-CAN] MCP2515 started OK (500 kbps)");
@@ -62,14 +64,14 @@ static bool send_pid_request(uint8_t pid) {
     req.data[0] = 0x02;
     req.data[1] = 0x01;
     req.data[2] = pid;
-    return s_mcp.sendMessage(&req) == MCP2515::ERROR_OK;
+    return s_mcp->sendMessage(&req) == MCP2515::ERROR_OK;
 }
 
 static bool recv_pid_response(uint8_t pid, uint8_t* out_a, uint8_t* out_b) {
     struct can_frame resp;
     unsigned long deadline = millis() + OBD_RESPONSE_TIMEOUT_MS;
     while (millis() < deadline) {
-        if (s_mcp.readMessage(&resp) == MCP2515::ERROR_OK) {
+        if (s_mcp->readMessage(&resp) == MCP2515::ERROR_OK) {
             if (resp.can_id == OBD_RESPONSE_ID &&
                 resp.can_dlc >= 4 &&
                 resp.data[1] == 0x41 &&

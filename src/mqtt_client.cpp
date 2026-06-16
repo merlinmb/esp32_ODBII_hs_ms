@@ -14,15 +14,23 @@ void mqtt_setup(WiFiClient& wifi_client) {
     s_mqtt.setBufferSize(640);
 }
 
+static unsigned long s_last_reconnect_attempt = 0;
+#define MQTT_RECONNECT_INTERVAL_MS 10000
+
 static void reconnect() {
     if (s_mqtt.connected()) return;
     if (WiFi.status() != WL_CONNECTED) return;
+
+    unsigned long now = millis();
+    if (now - s_last_reconnect_attempt < MQTT_RECONNECT_INTERVAL_MS) return;
+    s_last_reconnect_attempt = now;
 
     Serial.printf("[MQTT] connecting to %s:%d ...\n", MQTT_BROKER, MQTT_PORT);
     if (s_mqtt.connect(MQTT_CLIENT_ID)) {
         Serial.println("[MQTT] connected");
     } else {
-        Serial.printf("[MQTT] failed, rc=%d\n", s_mqtt.state());
+        Serial.printf("[MQTT] failed, rc=%d — will retry in %d s\n",
+                      s_mqtt.state(), MQTT_RECONNECT_INTERVAL_MS / 1000);
     }
 }
 
@@ -66,15 +74,17 @@ static void publish_data() {
     }
 }
 
-void mqtt_loop() {
-    reconnect();
-    s_mqtt.loop();
-
-    unsigned long now = millis();
-    if (now - s_last_publish >= MQTT_PUBLISH_INTERVAL_MS) {
-        s_last_publish = now;
+void mqtt_task(void* /*pvParameters*/) {
+    for (;;) {
+        reconnect();
         if (s_mqtt.connected()) {
-            publish_data();
+            s_mqtt.loop();
+            unsigned long now = millis();
+            if (now - s_last_publish >= MQTT_PUBLISH_INTERVAL_MS) {
+                s_last_publish = now;
+                publish_data();
+            }
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
