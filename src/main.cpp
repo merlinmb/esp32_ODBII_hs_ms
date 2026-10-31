@@ -91,11 +91,11 @@ class ServerCallbacks : public BLEServerCallbacks {
 };
 
 static void set_ble_value(BLECharacteristic *characteristic,
-                          const void *value,
+                          void *value,
                           size_t length,
                           bool notify) {
     if (characteristic == nullptr) return;
-    characteristic->setValue(static_cast<const uint8_t *>(value), length);
+    characteristic->setValue(static_cast<uint8_t *>(value), length);
     if (notify && device_connected) characteristic->notify();
 }
 
