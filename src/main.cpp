@@ -91,11 +91,11 @@ class ServerCallbacks : public BLEServerCallbacks {
 };
 
 static void set_ble_value(BLECharacteristic *characteristic,
-                          void *value,
+                          const void *value,
                           size_t length,
                           bool notify) {
     if (characteristic == nullptr) return;
-    characteristic->setValue(static_cast<uint8_t *>(value), length);
+    characteristic->setValue(static_cast<const uint8_t *>(value), length);
     if (notify && device_connected) characteristic->notify();
 }
 
@@ -215,8 +215,8 @@ static void enter_deep_sleep() {
     twai_stop();
     twai_driver_uninstall();
 
-    const esp_err_t wake_error = esp_deep_sleep_enable_gpio_wakeup(
-        1ULL << CAN_RX_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+    const esp_err_t wake_error = esp_sleep_enable_ext1_wakeup(
+        1ULL << CAN_RX_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
     if (wake_error != ESP_OK) {
         Serial.printf("[Sleep] GPIO wake configuration failed: %s\n",
                       esp_err_to_name(wake_error));

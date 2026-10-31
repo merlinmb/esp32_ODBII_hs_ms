@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 struct EvTelemetry {
     uint8_t speed_kmh;
     uint8_t battery_soc_pct;
