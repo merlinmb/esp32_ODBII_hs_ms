@@ -1,155 +1,77 @@
 #include "display.h"
-#include "obd_data.h"
 #include "credentials.h"
+
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <Arduino.h>
-#include <U8g2lib.h>
 #include <Wire.h>
-#include <WiFi.h>
-#include <math.h>
 
-static U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(
-    U8G2_R0, U8X8_PIN_NONE, DISPLAY_SCL, DISPLAY_SDA);
-
-static bool s_display_ok = false;
-static uint8_t s_frame = 0;
-static uint32_t s_last_switch = 0;
-
-// ---- value formatting -------------------------------------------------------
-
-static void fmt_int(char *buf, size_t n, float v, const char *unit) {
-    if (isnan(v)) { snprintf(buf, n, "n/a"); return; }
-    snprintf(buf, n, "%d%s", (int)roundf(v), unit);
-}
-
-static void fmt_f1(char *buf, size_t n, float v, const char *unit) {
-    if (isnan(v)) { snprintf(buf, n, "n/a"); return; }
-    snprintf(buf, n, "%.1f%s", v, unit);
-}
-
-// ---- shared draw helpers ---------------------------------------------------
-
-static void draw_title(const char *title) {
-    u8g2.setFont(u8g2_font_5x7_tf);
-    u8g2.drawStr(0, 8, title);
-    u8g2.drawHLine(0, 10, 128);
-}
-
-static void draw_cell(uint8_t x, uint8_t top, const char *label, const char *value) {
-    u8g2.setFont(u8g2_font_5x7_tf);
-    u8g2.drawStr(x, top + 8, label);
-    u8g2.setFont(u8g2_font_7x13B_tf);
-    u8g2.drawStr(x + 10, top + 23, value);
-}
-
-// ---- frame 0: ENGINE -------------------------------------------------------
-
-static void draw_frame_engine(const VehicleData &d) {
-    char b0[12], b1[12], b2[12], b3[12];
-    fmt_int(b0, 12, d.rpm, "");
-    fmt_int(b1, 12, d.speed_kmh, "");
-    fmt_int(b2, 12, d.throttle_pct, "%");
-    fmt_int(b3, 12, d.oil_temp_c, "\xb0\x43");
-    draw_title("ENGINE");
-    draw_cell(0,  11, "rpm",      b0);
-    draw_cell(65, 11, "speed",    b1);
-    draw_cell(0,  37, "throttle", b2);
-    draw_cell(65, 37, "oil",      b3);
-}
-
-// ---- frame 1: SENSORS ------------------------------------------------------
-
-static void draw_frame_sensors(const VehicleData &d) {
-    char b0[12], b1[12], b2[12], b3[12];
-    fmt_int(b0, 12, d.coolant_temp_c,    "\xb0\x43");
-    fmt_int(b1, 12, d.intake_air_temp_c, "\xb0\x43");
-    fmt_int(b2, 12, d.fuel_level_pct,    "%");
-    fmt_f1 (b3, 12, d.battery_voltage,   "V");
-    draw_title("SENSORS");
-    draw_cell(0,  11, "coolant", b0);
-    draw_cell(65, 11, "intake",  b1);
-    draw_cell(0,  37, "fuel",    b2);
-    draw_cell(65, 37, "battery", b3);
-}
-
-// ---- frame 2: STATUS -------------------------------------------------------
-
-static void draw_status_row(uint8_t y, const char *label, bool ok, const char *detail) {
-    u8g2.setFont(u8g2_font_5x7_tf);
-    u8g2.drawStr(0, y, label);
-    if (ok) u8g2.drawDisc(50, y - 3, 3);
-    else    u8g2.drawCircle(50, y - 3, 3);
-    u8g2.drawStr(60, y, detail);
-}
-
-static void draw_frame_status(const VehicleData &d) {
-    bool wifi_ok = (WiFi.status() == WL_CONNECTED);
-    draw_title("STATUS");
-    draw_status_row(21, "HS-CAN", d.hs_connected, d.hs_connected ? "OK"  : "offline");
-    draw_status_row(34, "MS-CAN", d.ms_connected, d.ms_connected ? "OK"  : "offline");
-    draw_status_row(47, "WiFi",   wifi_ok,         wifi_ok        ? WiFi.SSID().c_str() : "---");
-    u8g2.setFont(u8g2_font_5x7_tf);
-    String ip = wifi_ok ? WiFi.localIP().toString() : String("---");
-    u8g2.drawStr(0, 61, ip.c_str());
-}
-
-// ---- redraw ----------------------------------------------------------------
-
-static void redraw(const VehicleData &snap) {
-    u8g2.clearBuffer();
-    switch (s_frame) {
-        case 0: draw_frame_engine(snap);  break;
-        case 1: draw_frame_sensors(snap); break;
-        case 2: draw_frame_status(snap);  break;
-    }
-    u8g2.sendBuffer();
-}
-
-// ---- public API ------------------------------------------------------------
+static Adafruit_SSD1306 display(
+    OLED_SCREEN_WIDTH, OLED_SCREEN_HEIGHT, &Wire, OLED_RESET_PIN);
+static bool display_ready = false;
 
 void display_init() {
-    Wire.begin(DISPLAY_SDA, DISPLAY_SCL);
-    Wire.setClock(100000);
-
-    s_display_ok = u8g2.begin();
-    if (s_display_ok) {
-        u8g2.setPowerSave(0);
-        u8g2.setContrast(255);
-        s_frame = 0;
-        s_last_switch = millis();
-        diag_log("[DISP] SH1106 found on SDA=%d SCL=%d", DISPLAY_SDA, DISPLAY_SCL);
-
-        VehicleData snap;
-        if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            snap = g_vehicle;
-            xSemaphoreGive(g_data_mutex);
-        } else {
-            snap = {};
-        }
-        redraw(snap);
-    } else {
-        diag_log("[DISP] no display detected — running headless");
+    Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+    display_ready = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    if (!display_ready) {
+        Serial.println("[OLED] initialization failed; continuing headless");
+        return;
     }
+    display.clearDisplay();
+    display.display();
+    Serial.printf("[OLED] ready on SDA=%d SCL=%d\n", OLED_SDA_PIN, OLED_SCL_PIN);
 }
 
-void display_loop() {
-    if (!s_display_ok) return;
+void display_update(const EvTelemetry &telemetry, bool ble_connected) {
+    if (!display_ready) return;
 
-    uint32_t now = millis();
-    if ((now - s_last_switch) < (uint32_t)DISPLAY_INTERVAL_MS) return;
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
 
-    VehicleData snap;
-    if (xSemaphoreTake(g_data_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
-    snap = g_vehicle;
-    xSemaphoreGive(g_data_mutex);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print("SYS: READY");
+    display.setCursor(75, 0);
+    display.print(ble_connected ? "BLE: CON" : "BLE: ADV");
+    display.drawFastHLine(0, 10, OLED_SCREEN_WIDTH, SSD1306_WHITE);
 
-    s_last_switch = now;
-    s_frame = (s_frame + 1) % 3;
-    redraw(snap);
+    display.setTextSize(3);
+    display.setCursor(20, 18);
+    if (telemetry.speed_valid) {
+        display.printf("%03u", static_cast<unsigned>(telemetry.speed_kmh));
+    } else {
+        display.print("---");
+    }
+    display.setTextSize(1);
+    display.setCursor(80, 32);
+    display.print("km/h");
+
+    display.drawFastHLine(0, 48, OLED_SCREEN_WIDTH, SSD1306_WHITE);
+    display.setCursor(0, 54);
+    if (telemetry.soc_valid) {
+        display.printf("SOC: %u%%",
+                       static_cast<unsigned>(telemetry.battery_soc_pct));
+    } else {
+        display.print("SOC: --");
+    }
+
+    display.setCursor(70, 54);
+    if (!telemetry.power_valid) {
+        display.print("PWR: --");
+    } else if (telemetry.power_tenths_kw < 0) {
+        display.printf("REGEN: %.1fkW",
+                       -telemetry.power_tenths_kw / 10.0f);
+    } else {
+        display.printf("PWR: %.1fkW",
+                       telemetry.power_tenths_kw / 10.0f);
+    }
+
+    display.display();
 }
 
 void display_shutdown() {
-    if (!s_display_ok) return;
-    u8g2.clearDisplay();
-    u8g2.setPowerSave(1); // Put the display to sleep
-    diag_log("[DISP] display turned off");
+    if (!display_ready) return;
+    display.clearDisplay();
+    display.display();
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
 }
