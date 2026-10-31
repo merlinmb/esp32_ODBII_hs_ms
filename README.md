@@ -91,6 +91,7 @@ telemetry decoding with raw packet logging. The serial monitor prints a frame
 only when its data bytes or length differ from the last frame for that ID.
 All standard 11-bit IDs are cached; extended IDs use a 128-entry cache. Set
 the define back to `0` to restore normal telemetry processing.
+Both modes use TWAI listen-only mode and never transmit CAN frames.
 
 ## Project Files
 

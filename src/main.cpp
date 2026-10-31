@@ -11,6 +11,10 @@
 #include "credentials.h"
 #include "display.h"
 
+#ifndef CAN_DIAGNOSTIC_MODE
+#define CAN_DIAGNOSTIC_MODE 0
+#endif
+
 static EvTelemetry telemetry = {};
 static BLECharacteristic *speed_characteristic = nullptr;
 static BLECharacteristic *soc_characteristic = nullptr;
