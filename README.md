@@ -84,6 +84,14 @@ The OLED shows speed, battery SoC, and power/regen when valid. If no CAN
 frames arrive for five minutes, the firmware turns off the display and enters
 deep sleep, waking when CAN RX goes low.
 
+## Raw CAN Diagnostic Mode
+
+Set `CAN_DIAGNOSTIC_MODE` to `1` in `include/credentials.h` to replace normal
+telemetry decoding with raw packet logging. The serial monitor prints a frame
+only when its data bytes or length differ from the last frame for that ID.
+All standard 11-bit IDs are cached; extended IDs use a 128-entry cache. Set
+the define back to `0` to restore normal telemetry processing.
+
 ## Project Files
 
 ```text

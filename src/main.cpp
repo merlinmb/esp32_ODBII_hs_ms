@@ -6,6 +6,7 @@
 #include <driver/twai.h>
 #include <esp_sleep.h>
 #include <math.h>
+#include <string.h>
 
 #include "credentials.h"
 #include "display.h"
@@ -16,6 +17,63 @@ static BLECharacteristic *soc_characteristic = nullptr;
 static BLECharacteristic *power_characteristic = nullptr;
 static volatile bool device_connected = false;
 static uint32_t last_can_packet_time = 0;
+
+#if CAN_DIAGNOSTIC_MODE
+struct CanFrameCache {
+    uint32_t identifier;
+    uint8_t length;
+    uint8_t data[8];
+    bool seen;
+};
+
+static CanFrameCache standard_frame_cache[0x800] = {};
+static CanFrameCache extended_frame_cache[128] = {};
+static size_t next_extended_cache_slot = 0;
+
+static bool diagnostic_frame_changed(const twai_message_t &message) {
+    const uint8_t length = message.data_length_code;
+    if (length > sizeof(message.data)) return false;
+
+    CanFrameCache *cache = nullptr;
+    if (!message.extd && message.identifier < 0x800) {
+        cache = &standard_frame_cache[message.identifier];
+    } else {
+        for (CanFrameCache &entry : extended_frame_cache) {
+            if (entry.seen && entry.identifier == message.identifier) {
+                cache = &entry;
+                break;
+            }
+        }
+        if (cache == nullptr) {
+            cache = &extended_frame_cache[next_extended_cache_slot];
+            next_extended_cache_slot =
+                (next_extended_cache_slot + 1) % (sizeof(extended_frame_cache) /
+                                                   sizeof(extended_frame_cache[0]));
+        }
+    }
+
+    const bool changed = !cache->seen ||
+                         cache->length != length ||
+                         memcmp(cache->data, message.data, length) != 0;
+    if (!changed) return false;
+
+    cache->identifier = message.identifier;
+    cache->length = length;
+    memcpy(cache->data, message.data, length);
+    cache->seen = true;
+
+    Serial.printf("CAN %s%0*lX [%u]",
+                  message.extd ? "EXT " : "",
+                  message.extd ? 8 : 3,
+                  static_cast<unsigned long>(message.identifier),
+                  static_cast<unsigned>(length));
+    for (uint8_t i = 0; i < length; ++i) {
+        Serial.printf(" %02X", message.data[i]);
+    }
+    Serial.println();
+    return true;
+}
+#endif
 
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer *) override {
@@ -187,6 +245,9 @@ void loop() {
 
     if (twai_receive(&message, pdMS_TO_TICKS(5)) == ESP_OK) {
         last_can_packet_time = millis();
+#if CAN_DIAGNOSTIC_MODE
+        diagnostic_frame_changed(message);
+#else
         const EvTelemetry previous = telemetry;
         update_telemetry(message);
         telemetry_changed =
@@ -196,6 +257,7 @@ void loop() {
             previous.battery_soc_pct != telemetry.battery_soc_pct ||
             previous.power_valid != telemetry.power_valid ||
             previous.power_tenths_kw != telemetry.power_tenths_kw;
+#endif
     }
 
     static uint32_t last_display_refresh = 0;
